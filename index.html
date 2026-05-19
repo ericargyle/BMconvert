@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#111827" />
+    <title>BMconvert</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="bg-grid"></div>
+    <main class="app-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Boardmaker reader</p>
+          <h1>BMconvert</h1>
+          <p class="lede">
+            Open a Boardmaker <code>.bpf</code> file, inspect the project
+            metadata, preview embedded assets, and print a readable PDF version.
+          </p>
+        </div>
+        <div class="hero-card">
+          <div class="hero-card-label">Current focus</div>
+          <div class="hero-card-value">
+            Readable export, not byte-perfect reconstruction.
+          </div>
+          <div class="hero-card-note">
+            The reader prioritizes visible text and printable output.
+          </div>
+        </div>
+      </header>
+
+      <section class="controls">
+        <label class="file-drop" for="fileInput" id="dropZone">
+          <input
+            id="fileInput"
+            type="file"
+            accept=".bpf,.mps,.dat,application/octet-stream"
+          />
+          <span class="file-drop-kicker">Upload a file</span>
+          <span class="file-drop-title">Drop a Boardmaker .bpf here</span>
+          <span class="file-drop-copy">or click to browse</span>
+        </label>
+
+        <div class="control-row">
+          <button class="button secondary" id="printBtn" disabled>
+            Print / Save PDF
+          </button>
+          <button class="button ghost" id="clearBtn" disabled>Clear</button>
+        </div>
+      </section>
+
+      <section class="stats" id="stats"></section>
+
+      <section class="layout">
+        <article class="sheet" id="sheet">
+          <div class="sheet-top">
+            <div>
+              <p class="sheet-kicker">Reader view</p>
+              <h2 id="boardTitle">Load a Boardmaker file</h2>
+            </div>
+            <div class="sheet-meta" id="sheetMeta"></div>
+          </div>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>Project details</h3>
+              <span>Detected from the file header and label table</span>
+            </div>
+            <div class="detail-grid" id="detailGrid"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>Embedded assets</h3>
+              <span>JPEGs extracted from the .bpf container</span>
+            </div>
+            <div class="asset-grid" id="assetGrid"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>Visible strings</h3>
+              <span>Text fragments surfaced from the file for easier reading</span>
+            </div>
+            <div class="string-list" id="stringList"></div>
+          </section>
+        </article>
+
+        <aside class="sidebar">
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>How it works</h3>
+            </div>
+            <ul class="notes">
+              <li>Reads the file in-browser.</li>
+              <li>Extracts project metadata and embedded JPEGs.</li>
+              <li>Prints a clean report that is readable on paper or PDF.</li>
+            </ul>
+          </section>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <h3>File summary</h3>
+            </div>
+            <div class="summary-stack" id="summaryStack"></div>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module" src="./bmconvert.js"></script>
+  </body>
+</html>
