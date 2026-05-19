@@ -409,6 +409,26 @@ h1 {
   color: #2d3847;
 }
 
+.page-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.page-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 9px 12px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  background: #152033;
+  color: #fff;
+}
+
+.page-button:hover {
+  background: #0f172a;
+}
+
 .page-note {
   font-size: 0.8rem;
   color: var(--muted-dark);

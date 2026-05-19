@@ -45,6 +45,7 @@ function init() {
   els.printBtn.addEventListener('click', () => window.print());
   els.clearBtn.addEventListener('click', clearState);
   els.assetGrid.addEventListener('click', onAssetGridClick);
+  els.pageGrid.addEventListener('click', onPageGridClick);
 
   setupDropZone();
   renderEmpty();
@@ -166,6 +167,29 @@ function onAssetGridClick(event) {
   if (asset) {
     downloadAssetPdf(asset, state.parsed.title || stripExt(state.parsed.name), index + 1);
   }
+}
+
+function onPageGridClick(event) {
+  const button = event.target.closest('[data-page-index]');
+  if (!button || !state.parsed) {
+    return;
+  }
+
+  const index = Number(button.getAttribute('data-page-index'));
+  const page = state.parsed.pages?.[index];
+  if (!page) {
+    return;
+  }
+
+  const canvas = button.closest('.page-preview')?.querySelector('canvas');
+  if (!canvas) {
+    return;
+  }
+
+  downloadCanvasPdf(
+    canvas,
+    (state.parsed.title || stripExt(state.parsed.name)) + '-bm2-page-' + page.index + '.pdf',
+  );
 }
 
 function parseBoardmaker(buffer, name) {
@@ -450,9 +474,18 @@ async function renderBm2Pages(parsed) {
     const note = document.createElement('div');
     note.className = 'page-note';
     note.textContent = 'Rendering...';
+    const actions = document.createElement('div');
+    actions.className = 'page-actions';
+    const saveButton = document.createElement('button');
+    saveButton.className = 'page-button';
+    saveButton.type = 'button';
+    saveButton.setAttribute('data-page-index', String(page.index - 1));
+    saveButton.textContent = 'Save as PDF';
+    actions.appendChild(saveButton);
 
     figure.appendChild(canvas);
     figure.appendChild(caption);
+    figure.appendChild(actions);
     figure.appendChild(note);
     els.pageGrid.appendChild(figure);
 
@@ -565,6 +598,25 @@ function roundRect(ctx, x, y, width, height, radius) {
   ctx.lineTo(x, y + r);
   ctx.quadraticCurveTo(x, y, x + r, y);
   ctx.closePath();
+}
+
+async function downloadCanvasPdf(canvas, filename) {
+  const jsPDF = window.jspdf && window.jspdf.jsPDF;
+  if (!jsPDF) {
+    alert('PDF export library failed to load.');
+    return;
+  }
+
+  const dataUrl = canvas.toDataURL('image/png');
+  const pdf = new jsPDF({
+    orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+    unit: 'pt',
+    format: [canvas.width, canvas.height],
+    compress: true,
+  });
+
+  pdf.addImage(dataUrl, 'PNG', 0, 0, canvas.width, canvas.height, undefined, 'FAST');
+  pdf.save(sanitizeFilename(filename));
 }
 
 function extractJpegs(bytes) {
