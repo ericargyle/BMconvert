@@ -453,14 +453,14 @@ async function downloadAssetPdf(asset, boardTitle, assetNumber) {
   const dims = readJpegDimensions(bytes) || { width: 384, height: 512 };
   const pageWidth = 576;
   const pageHeight = 768;
-  const margin = 28;
+  const margin = 16;
   const maxWidth = pageWidth - margin * 2;
-  const maxHeight = pageHeight - margin * 2 - 28;
+  const maxHeight = pageHeight - margin * 2;
   const scale = Math.min(maxWidth / dims.width, maxHeight / dims.height);
   const drawWidth = Math.max(1, dims.width * scale);
   const drawHeight = Math.max(1, dims.height * scale);
   const x = (pageWidth - drawWidth) / 2;
-  const y = (pageHeight - drawHeight) / 2 - 8;
+  const y = (pageHeight - drawHeight) / 2;
 
   const pdf = new jsPDF({
     orientation: pageWidth > pageHeight ? 'landscape' : 'portrait',
@@ -469,13 +469,7 @@ async function downloadAssetPdf(asset, boardTitle, assetNumber) {
     compress: true,
   });
 
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(16);
-  pdf.text(boardTitle + ' - Asset ' + assetNumber, margin, margin + 8);
   pdf.addImage(dataUrl, 'JPEG', x, y, drawWidth, drawHeight, undefined, 'FAST');
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(9);
-  pdf.text('Eric Murray Consulting 2026', margin, pageHeight - margin + 4);
   pdf.save(sanitizeFilename(boardTitle) + '-asset-' + assetNumber + '.pdf');
 }
 
