@@ -366,6 +366,8 @@ h1 {
   background: #fff;
   border-radius: 18px;
   padding: 12px;
+  display: grid;
+  gap: 10px;
 }
 
 .asset img {
@@ -378,9 +380,30 @@ h1 {
 }
 
 .asset-caption {
-  margin-top: 10px;
   font-size: 0.84rem;
   color: var(--muted-dark);
+}
+
+.asset-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.asset-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 9px 12px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  background: #152033;
+  color: #fff;
+}
+
+.asset-button:hover {
+  background: #0f172a;
 }
 
 .string-list {
@@ -401,6 +424,15 @@ h1 {
 .sidebar {
   display: grid;
   gap: 18px;
+}
+
+.app-footer {
+  padding: 22px 4px 0;
+  color: rgba(229, 238, 252, 0.7);
+  text-align: center;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 0.74rem;
 }
 
 .notes {
@@ -501,6 +533,11 @@ code {
   .stats,
   .sidebar {
     display: none !important;
+  }
+
+  .app-footer {
+    color: #111827;
+    padding-top: 16px;
   }
 
   .app-shell {

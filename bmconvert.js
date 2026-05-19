@@ -41,6 +41,7 @@ function init() {
   els.fileInput.addEventListener('change', onFileInput);
   els.printBtn.addEventListener('click', () => window.print());
   els.clearBtn.addEventListener('click', clearState);
+  els.assetGrid.addEventListener('click', onAssetGridClick);
 
   setupDropZone();
   renderEmpty();
@@ -140,6 +141,19 @@ function renderParsed(parsed) {
   els.assetGrid.innerHTML = buildAssets(parsed);
   els.stringList.innerHTML = buildStringList(parsed.visibleStrings);
   els.summaryStack.innerHTML = buildSummary(parsed);
+}
+
+function onAssetGridClick(event) {
+  const button = event.target.closest('[data-asset-index]');
+  if (!button || !state.parsed) {
+    return;
+  }
+
+  const index = Number(button.getAttribute('data-asset-index'));
+  const asset = state.parsed.images[index];
+  if (asset) {
+    downloadAssetPdf(asset, state.parsed.title || stripExt(state.parsed.name), index + 1);
+  }
 }
 
 function parseBoardmaker(buffer, name) {
@@ -272,7 +286,8 @@ function extractJpegs(bytes) {
       break;
     }
 
-    const blob = new Blob([bytes.slice(soi, eoi + 2)], { type: 'image/jpeg' });
+    const jpegBytes = bytes.slice(soi, eoi + 2);
+    const blob = new Blob([jpegBytes], { type: 'image/jpeg' });
     const url = URL.createObjectURL(blob);
     state.assetUrls.push(url);
     images.push({
@@ -280,6 +295,8 @@ function extractJpegs(bytes) {
       start: soi,
       end: eoi + 2,
       size: eoi - soi + 2,
+      blob,
+      bytes: jpegBytes,
       url,
     });
 
@@ -344,16 +361,18 @@ function buildAssets(parsed) {
       (asset) => [
         '<figure class="asset">',
         '<img src="' + asset.url + '" alt="Embedded image ' + asset.index + '" />',
-        '<figcaption class="asset-caption">',
-        'Image ' +
+        '<div class="asset-actions">',
+        '<button class="asset-button" type="button" data-asset-index="' + (asset.index - 1) + '">Save as PDF</button>',
+        '<span class="asset-caption">Image ' +
           asset.index +
           ' · ' +
           formatBytes(asset.size) +
           ' · bytes ' +
           asset.start +
           ' to ' +
-          asset.end,
-        '</figcaption>',
+          asset.end +
+          '</span>',
+        '</div>',
         '</figure>',
       ].join(''),
     )
@@ -420,4 +439,160 @@ function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+}
+
+async function downloadAssetPdf(asset, boardTitle, assetNumber) {
+  const jsPDF = window.jspdf && window.jspdf.jsPDF;
+  if (!jsPDF) {
+    alert('PDF export library failed to load.');
+    return;
+  }
+
+  const dataUrl = await blobToDataUrl(asset.blob);
+  const bytes = new Uint8Array(await asset.blob.arrayBuffer());
+  const dims = readJpegDimensions(bytes) || { width: 384, height: 512 };
+  const pageWidth = 576;
+  const pageHeight = 768;
+  const margin = 28;
+  const maxWidth = pageWidth - margin * 2;
+  const maxHeight = pageHeight - margin * 2 - 28;
+  const scale = Math.min(maxWidth / dims.width, maxHeight / dims.height);
+  const drawWidth = Math.max(1, dims.width * scale);
+  const drawHeight = Math.max(1, dims.height * scale);
+  const x = (pageWidth - drawWidth) / 2;
+  const y = (pageHeight - drawHeight) / 2 - 8;
+
+  const pdf = new jsPDF({
+    orientation: pageWidth > pageHeight ? 'landscape' : 'portrait',
+    unit: 'pt',
+    format: [pageWidth, pageHeight],
+    compress: true,
+  });
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(16);
+  pdf.text(boardTitle + ' - Asset ' + assetNumber, margin, margin + 8);
+  pdf.addImage(dataUrl, 'JPEG', x, y, drawWidth, drawHeight, undefined, 'FAST');
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(9);
+  pdf.text('Eric Murray Consulting 2026', margin, pageHeight - margin + 4);
+  pdf.save(sanitizeFilename(boardTitle) + '-asset-' + assetNumber + '.pdf');
+}
+
+function readJpegDimensions(bytes) {
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) {
+    return null;
+  }
+
+  let i = 2;
+  while (i < bytes.length - 1) {
+    if (bytes[i] !== 0xff) {
+      i += 1;
+      continue;
+    }
+
+    const marker = bytes[i + 1];
+    if (marker === 0xd9 || marker === 0xda) {
+      break;
+    }
+    if (marker >= 0xc0 && marker <= 0xc3 && i + 8 < bytes.length) {
+      const height = (bytes[i + 5] << 8) | bytes[i + 6];
+      const width = (bytes[i + 7] << 8) | bytes[i + 8];
+      return { width, height };
+    }
+    if (i + 4 >= bytes.length) {
+      break;
+    }
+    const length = (bytes[i + 2] << 8) | bytes[i + 3];
+    if (!length) {
+      break;
+    }
+    i += 2 + length;
+  }
+
+  return null;
+}
+
+function buildOneImagePdf(imageBytes, imageWidth, imageHeight, options) {
+  const pageWidth = options.pageWidth;
+  const pageHeight = options.pageHeight;
+  const margin = 28;
+  const maxWidth = pageWidth - margin * 2;
+  const maxHeight = pageHeight - margin * 2 - 28;
+  const scale = Math.min(maxWidth / imageWidth, maxHeight / imageHeight);
+  const drawWidth = Math.max(1, Math.floor(imageWidth * scale));
+  const drawHeight = Math.max(1, Math.floor(imageHeight * scale));
+  const x = Math.floor((pageWidth - drawWidth) / 2);
+  const y = Math.floor((pageHeight - drawHeight) / 2 - 8);
+
+  const contentStream = ['q', drawWidth + ' 0 0 ' + drawHeight + ' ' + x + ' ' + y + ' cm', '/Im0 Do', 'Q'].join('\n');
+  const objects = [];
+
+  objects.push('<< /Type /Catalog /Pages 2 0 R >>');
+  objects.push('<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+  objects.push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + pageWidth + ' ' + pageHeight + '] /Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>');
+  objects.push('<< /Length ' + contentStream.length + ' >>\nstream\n' + contentStream + '\nendstream');
+  const imagePrefix = '<< /Type /XObject /Subtype /Image /Width ' + imageWidth + ' /Height ' + imageHeight + ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ' + imageBytes.length + ' >>\nstream\n';
+  const imageSuffix = '\nendstream';
+
+  const chunks = [asciiBytes('%PDF-1.4\n')];
+  const offsets = [0];
+  let position = chunks[0].length;
+
+  for (let i = 0; i < objects.length; i += 1) {
+    offsets.push(position);
+    const body = (i + 1) + ' 0 obj\n' + objects[i] + '\nendobj\n';
+    const bodyBytes = asciiBytes(body);
+    chunks.push(bodyBytes);
+    position += bodyBytes.length;
+  }
+
+  const xrefPos = position;
+  let xref = 'xref\n0 ' + (objects.length + 1) + '\n0000000000 65535 f \n';
+  for (let i = 1; i < offsets.length; i += 1) {
+    xref += String(offsets[i]).padStart(10, '0') + ' 00000 n \n';
+  }
+  chunks.push(asciiBytes(xref));
+  chunks.push(asciiBytes('5 0 obj\n' + imagePrefix));
+  chunks.push(imageBytes);
+  chunks.push(asciiBytes(imageSuffix + '\nendobj\n'));
+  chunks.push(asciiBytes('trailer\n<< /Size ' + (objects.length + 1) + ' /Root 1 0 R >>\nstartxref\n' + xrefPos + '\n%%EOF'));
+
+  return concatBytes(chunks);
+}
+
+function sanitizeFilename(value) {
+  return String(value)
+    .trim()
+    .replace(/[^a-z0-9._-]+/gi, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 80) || 'bmconvert-asset';
+}
+
+function asciiBytes(value) {
+  return new TextEncoder().encode(value);
+}
+
+function concatBytes(chunks) {
+  let total = 0;
+  for (const chunk of chunks) {
+    total += chunk.length;
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
 }
