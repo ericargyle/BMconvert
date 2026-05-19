@@ -471,9 +471,6 @@ async function renderBm2Pages(parsed) {
     const caption = document.createElement('div');
     caption.className = 'page-caption';
     caption.textContent = 'EMF ' + page.index + ' · ' + formatBytes(page.size) + ' · records ' + page.records;
-    const note = document.createElement('div');
-    note.className = 'page-note';
-    note.textContent = 'Rendering...';
     const actions = document.createElement('div');
     actions.className = 'page-actions';
     const saveButton = document.createElement('button');
@@ -482,10 +479,13 @@ async function renderBm2Pages(parsed) {
     saveButton.setAttribute('data-page-index', String(page.index - 1));
     saveButton.textContent = 'Save as PDF';
     actions.appendChild(saveButton);
+    const note = document.createElement('div');
+    note.className = 'page-note';
+    note.textContent = 'Rendering...';
 
-    figure.appendChild(canvas);
-    figure.appendChild(caption);
     figure.appendChild(actions);
+    figure.appendChild(caption);
+    figure.appendChild(canvas);
     figure.appendChild(note);
     els.pageGrid.appendChild(figure);
 
