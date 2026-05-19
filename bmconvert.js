@@ -394,6 +394,7 @@ function extractEmfSegments(bytes) {
       bounds,
       device,
       records,
+      labels: extractBm2Labels(bytes, start, start + segmentBytes.length),
       blob: new Blob([segmentBytes], { type: 'image/x-emf' }),
     });
 
@@ -401,6 +402,20 @@ function extractEmfSegments(bytes) {
   }
 
   return segments;
+}
+
+function extractBm2Labels(bytes, start, end) {
+  const windowStart = Math.max(0, start - 900);
+  const windowEnd = Math.min(bytes.length, end + 900);
+  const windowBytes = bytes.slice(windowStart, windowEnd);
+
+  return [...new Set(extractAsciiStrings(windowBytes, 3))]
+    .map((text) => text.trim())
+    .filter((text) => text.length >= 3)
+    .filter((text) => !/^arial$/i.test(text))
+    .filter((text) => !/^emf$/i.test(text))
+    .filter((text) => !/^[0-9]+$/.test(text))
+    .slice(0, 12);
 }
 
 async function renderBm2Pages(parsed) {
@@ -443,8 +458,14 @@ async function renderBm2Pages(parsed) {
 
     try {
       await renderEmfSegment(converter, page.blob, canvas);
-      note.textContent = 'Ready to print';
+      if (isCanvasBlank(canvas)) {
+        drawBm2Fallback(canvas, page, parsed);
+        note.textContent = 'Fallback text preview';
+      } else {
+        note.textContent = 'Ready to print';
+      }
     } catch (error) {
+      drawBm2Fallback(canvas, page, parsed);
       note.textContent = 'Could not render this page drawing.';
       console.error(error);
     }
@@ -460,6 +481,90 @@ function renderEmfSegment(converter, blob, canvas) {
       reject(error);
     }
   });
+}
+
+function isCanvasBlank(canvas) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return true;
+  }
+
+  const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] !== 0 && (data[i] !== 255 || data[i + 1] !== 255 || data[i + 2] !== 255)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function drawBm2Fallback(canvas, page, parsed) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return;
+  }
+
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = '#1f2937';
+  ctx.lineWidth = Math.max(2, Math.round(width / 220));
+  ctx.strokeRect(1, 1, width - 2, height - 2);
+
+  const title = parsed.title || 'BM2 page';
+  ctx.fillStyle = '#111827';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold ' + Math.max(24, Math.round(width / 18)) + 'px Avenir Next, Segoe UI, sans-serif';
+  ctx.fillText(title, width / 2, Math.round(height * 0.12));
+
+  ctx.font = Math.max(14, Math.round(width / 40)) + 'px Avenir Next, Segoe UI, sans-serif';
+  ctx.fillStyle = '#4b5563';
+  ctx.fillText('Fallback preview from extracted BM2 text', width / 2, Math.round(height * 0.18));
+
+  const labels = page.labels?.length ? page.labels : parsed.visibleStrings.slice(0, 6);
+  const chips = labels.length ? labels : ['BM2 content detected'];
+  const top = Math.round(height * 0.32);
+  const chipHeight = Math.max(44, Math.round(height / 9));
+  const gap = Math.max(10, Math.round(width / 40));
+  const chipWidth = Math.max(120, Math.min(Math.round(width * 0.72), width - 40));
+  const x = Math.round((width - chipWidth) / 2);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = Math.max(16, Math.round(width / 28)) + 'px Avenir Next, Segoe UI, sans-serif';
+
+  chips.slice(0, 5).forEach((text, index) => {
+    const y = top + index * (chipHeight + gap);
+    roundRect(ctx, x, y, chipWidth, chipHeight, 14);
+    ctx.fillStyle = '#f3f4f6';
+    ctx.fill();
+    ctx.strokeStyle = '#d1d5db';
+    ctx.stroke();
+    ctx.fillStyle = '#152033';
+    ctx.fillText(text, width / 2, y + chipHeight / 2);
+  });
+
+  ctx.fillStyle = '#6b7280';
+  ctx.font = Math.max(12, Math.round(width / 48)) + 'px Avenir Next, Segoe UI, sans-serif';
+  ctx.fillText('EMF page ' + page.index + ' · ' + page.records + ' records', width / 2, Math.round(height * 0.9));
+}
+
+function roundRect(ctx, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
 }
 
 function extractJpegs(bytes) {
