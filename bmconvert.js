@@ -2,6 +2,7 @@ const state = {
   file: null,
   parsed: null,
   assetUrls: [],
+  renderToken: 0,
 };
 
 const els = {
@@ -14,6 +15,8 @@ const els = {
   sheetMeta: document.getElementById('sheetMeta'),
   detailGrid: document.getElementById('detailGrid'),
   assetGrid: document.getElementById('assetGrid'),
+  pagePanel: document.getElementById('pagePanel'),
+  pageGrid: document.getElementById('pageGrid'),
   stringList: document.getElementById('stringList'),
   summaryStack: document.getElementById('summaryStack'),
 };
@@ -112,9 +115,11 @@ function clearAssets() {
 
 function renderEmpty() {
   els.boardTitle.textContent = 'Load a Boardmaker file';
-  els.sheetMeta.innerHTML = '<div>Waiting for a .bpf upload.</div>';
+  els.sheetMeta.innerHTML = '<div>Waiting for a .bpf or .bm2 upload.</div>';
   els.detailGrid.innerHTML = '<div class="empty-state">No file loaded yet.</div>';
   els.assetGrid.innerHTML = '<div class="empty-state">Embedded images will appear here.</div>';
+  els.pagePanel.hidden = true;
+  els.pageGrid.innerHTML = '';
   els.stringList.innerHTML = '<div class="empty-state">Visible strings will appear here.</div>';
   els.summaryStack.innerHTML = '<div class="empty-state">No summary yet.</div>';
   els.stats.innerHTML = '';
@@ -141,6 +146,13 @@ function renderParsed(parsed) {
   els.assetGrid.innerHTML = buildAssets(parsed);
   els.stringList.innerHTML = buildStringList(parsed.visibleStrings);
   els.summaryStack.innerHTML = buildSummary(parsed);
+  if (parsed.pages?.length) {
+    els.pagePanel.hidden = false;
+    renderBm2Pages(parsed);
+  } else {
+    els.pagePanel.hidden = true;
+    els.pageGrid.innerHTML = '';
+  }
 }
 
 function onAssetGridClick(event) {
@@ -158,6 +170,12 @@ function onAssetGridClick(event) {
 
 function parseBoardmaker(buffer, name) {
   const bytes = new Uint8Array(buffer);
+  const ext = getFileExtension(name);
+
+  if (ext === 'bm2') {
+    return parseBm2(bytes, name);
+  }
+
   const utf16 = [...extractUtf16Strings(bytes, 0), ...extractUtf16Strings(bytes, 1)]
     .sort((a, b) => a.offset - b.offset);
 
@@ -178,6 +196,29 @@ function parseBoardmaker(buffer, name) {
     metadata,
     images,
     visibleStrings,
+    pages: [],
+  };
+}
+
+function parseBm2(bytes, name) {
+  const pages = extractEmfSegments(bytes);
+  const visibleStrings = buildBm2VisibleStrings(bytes);
+  const title =
+    visibleStrings.find((text) => !['go back', 'next'].includes(text.toLowerCase())) ||
+    stripExt(name);
+
+  return {
+    name,
+    size: bytes.length,
+    title,
+    formatName: 'Boardmaker BM2',
+    metadata: {
+      Pages: String(pages.length),
+      Container: 'Boardmaker BM2',
+    },
+    images: [],
+    visibleStrings,
+    pages,
   };
 }
 
@@ -269,6 +310,156 @@ function buildVisibleStrings(strings) {
       return array.indexOf(text) === index;
     })
     .slice(0, 48);
+}
+
+function buildBm2VisibleStrings(bytes) {
+  const rawStrings = extractAsciiStrings(bytes)
+    .filter((text) => text.length >= 3)
+    .filter((text) => !/^arial$/i.test(text))
+    .filter((text) => !/^emf$/i.test(text))
+    .filter((text) => !/^\s+$/.test(text));
+
+  return [...new Set(rawStrings)].slice(0, 48);
+}
+
+function extractAsciiStrings(bytes, minChars = 3) {
+  const out = [];
+  let current = '';
+
+  for (let i = 0; i < bytes.length; i += 1) {
+    const ch = bytes[i];
+    if (ch >= 32 && ch <= 126) {
+      current += String.fromCharCode(ch);
+    } else {
+      if (current.length >= minChars) {
+        out.push(current);
+      }
+      current = '';
+    }
+  }
+
+  if (current.length >= minChars) {
+    out.push(current);
+  }
+
+  return out;
+}
+
+function extractEmfSegments(bytes) {
+  const segments = [];
+  let searchAt = 0;
+
+  while (searchAt < bytes.length - 8) {
+    const start = findMarker(bytes, [0x01, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00], searchAt);
+    if (start === -1 || start + 88 > bytes.length) {
+      break;
+    }
+
+    const signatureOffset = start + 40;
+    if (
+      bytes[signatureOffset] !== 0x20 ||
+      bytes[signatureOffset + 1] !== 0x45 ||
+      bytes[signatureOffset + 2] !== 0x4d ||
+      bytes[signatureOffset + 3] !== 0x46
+    ) {
+      searchAt = start + 8;
+      continue;
+    }
+
+    const view = new DataView(bytes.buffer, bytes.byteOffset + start, Math.min(bytes.length - start, 108));
+    const totalBytes = view.getUint32(48, true);
+    const records = view.getUint32(52, true);
+    const bounds = {
+      left: view.getInt32(8, true),
+      top: view.getInt32(12, true),
+      right: view.getInt32(16, true),
+      bottom: view.getInt32(20, true),
+    };
+    const device = {
+      width: view.getInt32(72, true),
+      height: view.getInt32(76, true),
+    };
+
+    if (totalBytes < 88 || start + totalBytes > bytes.length + 4) {
+      searchAt = start + 8;
+      continue;
+    }
+
+    const segmentBytes = bytes.slice(start, Math.min(bytes.length, start + totalBytes));
+    segments.push({
+      index: segments.length + 1,
+      start,
+      end: start + segmentBytes.length,
+      size: segmentBytes.length,
+      bounds,
+      device,
+      records,
+      blob: new Blob([segmentBytes], { type: 'image/x-emf' }),
+    });
+
+    searchAt = start + totalBytes;
+  }
+
+  return segments;
+}
+
+async function renderBm2Pages(parsed) {
+  const token = ++state.renderToken;
+  els.pageGrid.innerHTML = '';
+
+  if (!parsed.pages.length) {
+    els.pageGrid.innerHTML = '<div class="empty-state">No EMF page drawings were detected in this .bm2 file.</div>';
+    return;
+  }
+
+  if (!window.WMFConverter) {
+    els.pageGrid.innerHTML = '<div class="empty-state">EMF rendering library failed to load.</div>';
+    return;
+  }
+
+  const converter = new window.WMFConverter();
+
+  for (const page of parsed.pages) {
+    if (token !== state.renderToken) {
+      return;
+    }
+
+    const figure = document.createElement('figure');
+    figure.className = 'page-preview';
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(page.device.width || 800));
+    canvas.height = Math.max(1, Math.round(page.device.height || 600));
+    const caption = document.createElement('div');
+    caption.className = 'page-caption';
+    caption.textContent = 'EMF ' + page.index + ' · ' + formatBytes(page.size) + ' · records ' + page.records;
+    const note = document.createElement('div');
+    note.className = 'page-note';
+    note.textContent = 'Rendering...';
+
+    figure.appendChild(canvas);
+    figure.appendChild(caption);
+    figure.appendChild(note);
+    els.pageGrid.appendChild(figure);
+
+    try {
+      await renderEmfSegment(converter, page.blob, canvas);
+      note.textContent = 'Ready to print';
+    } catch (error) {
+      note.textContent = 'Could not render this page drawing.';
+      console.error(error);
+    }
+  }
+}
+
+function renderEmfSegment(converter, blob, canvas) {
+  return new Promise((resolve, reject) => {
+    const file = new File([blob], 'segment.emf', { type: 'image/x-emf' });
+    try {
+      converter.toCanvas(file, canvas, () => resolve());
+    } catch (error) {
+      reject(error);
+    }
+  });
 }
 
 function extractJpegs(bytes) {
@@ -394,6 +585,7 @@ function buildSummary(parsed) {
     ['Boardmaker metadata', Object.keys(parsed.metadata).length + ' fields'],
     ['Visible strings', parsed.visibleStrings.length + ' fragments'],
     ['Embedded images', parsed.images.length + ' JPEGs'],
+    ['BM2 pages', parsed.pages?.length || 0],
     ['Print mode', 'Browser print / Save as PDF'],
   ];
 
@@ -430,6 +622,11 @@ function formatBytes(bytes) {
 
 function stripExt(name) {
   return name.replace(/\.[^.]+$/, '');
+}
+
+function getFileExtension(name) {
+  const match = String(name).match(/\.([^.]+)$/);
+  return match ? match[1].toLowerCase() : '';
 }
 
 function escapeHtml(value) {

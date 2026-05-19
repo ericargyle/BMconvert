@@ -15,8 +15,9 @@
           <p class="eyebrow">Boardmaker reader</p>
           <h1>BMconvert</h1>
           <p class="lede">
-            Open a Boardmaker <code>.bpf</code> file, inspect the project
-            metadata, preview embedded assets, and print a readable PDF version.
+            Open a Boardmaker <code>.bpf</code> or <code>.bm2</code> file,
+            inspect the project metadata, preview embedded assets or pages, and
+            print a readable PDF version.
           </p>
         </div>
         <div class="hero-card">
@@ -35,10 +36,10 @@
           <input
             id="fileInput"
             type="file"
-            accept=".bpf,.mps,.dat,application/octet-stream"
+            accept=".bpf,.bm2,.mps,.dat,application/octet-stream"
           />
           <span class="file-drop-kicker">Upload a file</span>
-          <span class="file-drop-title">Drop a Boardmaker .bpf here</span>
+          <span class="file-drop-title">Drop a Boardmaker .bpf or .bm2 here</span>
           <span class="file-drop-copy">or click to browse</span>
         </label>
 
@@ -78,6 +79,14 @@
             <div class="asset-grid" id="assetGrid"></div>
           </section>
 
+          <section class="panel" id="pagePanel">
+            <div class="panel-heading">
+              <h3>BM2 page drawings</h3>
+              <span>EMF segments extracted from the .bm2 container</span>
+            </div>
+            <div class="page-grid" id="pageGrid"></div>
+          </section>
+
           <section class="panel">
             <div class="panel-heading">
               <h3>Visible strings</h3>
@@ -112,6 +121,9 @@
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/g21589/wmf2canvas@master/js/sprintf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/g21589/wmf2canvas@master/js/bundle.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/g21589/wmf2canvas@master/js/wmf.js"></script>
     <script type="module" src="./bmconvert.js"></script>
   </body>
 </html>
