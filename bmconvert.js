@@ -211,11 +211,15 @@ function parseBoardmaker(buffer, name) {
     return parseBm2(bytes, name);
   }
 
+  if (isCompoundDocument(bytes) && window.CFB) {
+    return parseCompoundBoardmaker(bytes, name);
+  }
+
   const utf16 = [...extractUtf16Strings(bytes, 0), ...extractUtf16Strings(bytes, 1)]
     .sort((a, b) => a.offset - b.offset);
 
   const metadata = extractMetadata(utf16);
-  const images = extractEmbeddedAssets(bytes);
+  const images = extractEmbeddedAssets([bytes]);
   const visibleStrings = buildVisibleStrings(utf16);
   const title =
     metadata.BoardTitle ||
@@ -228,6 +232,39 @@ function parseBoardmaker(buffer, name) {
     size: bytes.length,
     title,
     formatName: 'Boardmaker BPF',
+    metadata,
+    images,
+    visibleStrings,
+    pages: [],
+  };
+}
+
+function parseCompoundBoardmaker(bytes, name) {
+  let cfb = null;
+  try {
+    cfb = window.CFB.read(bytes);
+  } catch (error) {
+    console.warn('CFB parsing failed, falling back to raw scan.', error);
+  }
+
+  const streamBytes = cfb ? extractCfbStreamBytes(cfb) : [];
+  const scanSources = streamBytes.length ? streamBytes : [bytes];
+  const utf16 = [...extractUtf16Strings(bytes, 0), ...extractUtf16Strings(bytes, 1)]
+    .sort((a, b) => a.offset - b.offset);
+  const metadata = extractMetadata(utf16);
+  const images = extractEmbeddedAssets(scanSources);
+  const visibleStrings = buildVisibleStrings(utf16);
+  const title =
+    metadata.BoardTitle ||
+    metadata.DocumentTitle ||
+    metadata.NewPage ||
+    stripExt(name);
+
+  return {
+    name,
+    size: bytes.length,
+    title,
+    formatName: 'Boardmaker BPF (compound)',
     metadata,
     images,
     visibleStrings,
@@ -630,46 +667,55 @@ async function downloadCanvasPdf(canvas, filename) {
   pdf.save(sanitizeFilename(filename));
 }
 
-function extractEmbeddedAssets(bytes) {
+function extractEmbeddedAssets(sources) {
   const images = [];
-  const candidates = [];
+  const seen = new Set();
 
-  collectJpegs(bytes, candidates);
-  collectPngs(bytes, candidates);
-  collectGifs(bytes, candidates);
-  collectBmps(bytes, candidates);
-  collectWebps(bytes, candidates);
-  collectEmfs(bytes, candidates);
+  for (const bytes of sources) {
+    const candidates = [];
+    collectJpegs(bytes, candidates);
+    collectPngs(bytes, candidates);
+    collectGifs(bytes, candidates);
+    collectBmps(bytes, candidates);
+    collectWebps(bytes, candidates);
+    collectEmfs(bytes, candidates);
 
-  let lastEnd = -1;
-  candidates
-    .sort((a, b) => a.start - b.start || a.end - b.end)
-    .filter((candidate) => {
-      if (candidate.end <= candidate.start) {
-        return false;
-      }
-      if (candidate.start < lastEnd) {
-        return false;
-      }
-      lastEnd = candidate.end;
-      return true;
-    })
-    .forEach((candidate, index) => {
-      const blob = new Blob([candidate.bytes], { type: candidate.mimeType });
-      const url = URL.createObjectURL(blob);
-      state.assetUrls.push(url);
-      images.push({
-        index: index + 1,
-        kind: candidate.kind,
-        mimeType: candidate.mimeType,
-        start: candidate.start,
-        end: candidate.end,
-        size: candidate.bytes.length,
-        blob,
-        bytes: candidate.bytes,
-        url,
+    let lastEnd = -1;
+    candidates
+      .sort((a, b) => a.start - b.start || a.end - b.end)
+      .filter((candidate) => {
+        if (candidate.end <= candidate.start) {
+          return false;
+        }
+        if (candidate.start < lastEnd) {
+          return false;
+        }
+        lastEnd = candidate.end;
+        return true;
+      })
+      .forEach((candidate) => {
+        const key = candidate.mimeType + ':' + candidate.bytes.length + ':' + bytesSignature(candidate.bytes);
+        if (seen.has(key)) {
+          return;
+        }
+        seen.add(key);
+
+        const blob = new Blob([candidate.bytes], { type: candidate.mimeType });
+        const url = URL.createObjectURL(blob);
+        state.assetUrls.push(url);
+        images.push({
+          index: images.length + 1,
+          kind: candidate.kind,
+          mimeType: candidate.mimeType,
+          start: candidate.start,
+          end: candidate.end,
+          size: candidate.bytes.length,
+          blob,
+          bytes: candidate.bytes,
+          url,
+        });
       });
-    });
+  }
 
   return images;
 }
@@ -913,6 +959,61 @@ function readUint32Be(bytes, offset) {
     (bytes[offset + 2] << 8) |
     bytes[offset + 3]
   ) >>> 0;
+}
+
+function isCompoundDocument(bytes) {
+  return (
+    bytes.length >= 8 &&
+    bytes[0] === 0xd0 &&
+    bytes[1] === 0xcf &&
+    bytes[2] === 0x11 &&
+    bytes[3] === 0xe0 &&
+    bytes[4] === 0xa1 &&
+    bytes[5] === 0xb1 &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0xe1
+  );
+}
+
+function extractCfbStreamBytes(cfb) {
+  const out = [];
+  const entries = cfb.FileIndex || [];
+  for (const entry of entries) {
+    if (!entry || entry.type !== 2 || !entry.content) {
+      continue;
+    }
+    const bytes = toUint8Array(entry.content);
+    if (bytes && bytes.length) {
+      out.push(bytes);
+    }
+  }
+  return out;
+}
+
+function toUint8Array(content) {
+  if (content instanceof Uint8Array) {
+    return content;
+  }
+  if (content instanceof ArrayBuffer) {
+    return new Uint8Array(content);
+  }
+  if (Array.isArray(content)) {
+    return new Uint8Array(content);
+  }
+  if (ArrayBuffer.isView(content)) {
+    return new Uint8Array(content.buffer, content.byteOffset, content.byteLength);
+  }
+  if (content && typeof content.length === 'number') {
+    return new Uint8Array(content);
+  }
+  return null;
+}
+
+function bytesSignature(bytes) {
+  const sample = bytes.slice(0, Math.min(bytes.length, 32));
+  return Array.from(sample)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 function findMarker(bytes, marker, start) {
