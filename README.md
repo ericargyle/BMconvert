@@ -5,7 +5,7 @@ BMconvert is a browser-based reader for Boardmaker files.
 It focuses on:
 
 - extracting readable metadata from the file header
-- previewing embedded JPEG assets
+- previewing embedded assets when the browser can decode them, plus EMF fallback rendering
 - producing a clean print and PDF view in the browser
 
 ## Status

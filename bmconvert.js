@@ -3,6 +3,7 @@ const state = {
   parsed: null,
   assetUrls: [],
   renderToken: 0,
+  assetRenderToken: 0,
 };
 
 const els = {
@@ -145,6 +146,7 @@ function renderParsed(parsed) {
 
   els.detailGrid.innerHTML = buildDetails(parsed);
   els.assetGrid.innerHTML = buildAssets(parsed);
+  renderAssetPreviews(parsed);
   els.stringList.innerHTML = buildStringList(parsed.visibleStrings);
   els.summaryStack.innerHTML = buildSummary(parsed);
   if (parsed.pages?.length) {
@@ -165,6 +167,15 @@ function onAssetGridClick(event) {
   const index = Number(button.getAttribute('data-asset-index'));
   const asset = state.parsed.images[index];
   if (asset) {
+    const canvas = button.closest('.asset')?.querySelector('canvas');
+    if (asset.mimeType === 'image/x-emf' && canvas) {
+      downloadCanvasPdf(
+        canvas,
+        (state.parsed.title || stripExt(state.parsed.name)) + '-asset-' + (index + 1) + '.pdf',
+      );
+      return;
+    }
+
     downloadAssetPdf(asset, state.parsed.title || stripExt(state.parsed.name), index + 1);
   }
 }
@@ -204,7 +215,7 @@ function parseBoardmaker(buffer, name) {
     .sort((a, b) => a.offset - b.offset);
 
   const metadata = extractMetadata(utf16);
-  const images = extractJpegs(bytes);
+  const images = extractEmbeddedAssets(bytes);
   const visibleStrings = buildVisibleStrings(utf16);
   const title =
     metadata.BoardTitle ||
@@ -619,40 +630,289 @@ async function downloadCanvasPdf(canvas, filename) {
   pdf.save(sanitizeFilename(filename));
 }
 
-function extractJpegs(bytes) {
+function extractEmbeddedAssets(bytes) {
   const images = [];
+  const candidates = [];
+
+  collectJpegs(bytes, candidates);
+  collectPngs(bytes, candidates);
+  collectGifs(bytes, candidates);
+  collectBmps(bytes, candidates);
+  collectWebps(bytes, candidates);
+  collectEmfs(bytes, candidates);
+
+  let lastEnd = -1;
+  candidates
+    .sort((a, b) => a.start - b.start || a.end - b.end)
+    .filter((candidate) => {
+      if (candidate.end <= candidate.start) {
+        return false;
+      }
+      if (candidate.start < lastEnd) {
+        return false;
+      }
+      lastEnd = candidate.end;
+      return true;
+    })
+    .forEach((candidate, index) => {
+      const blob = new Blob([candidate.bytes], { type: candidate.mimeType });
+      const url = URL.createObjectURL(blob);
+      state.assetUrls.push(url);
+      images.push({
+        index: index + 1,
+        kind: candidate.kind,
+        mimeType: candidate.mimeType,
+        start: candidate.start,
+        end: candidate.end,
+        size: candidate.bytes.length,
+        blob,
+        bytes: candidate.bytes,
+        url,
+      });
+    });
+
+  return images;
+}
+
+function collectJpegs(bytes, out) {
   let offset = 0;
-  let index = 0;
 
   while (offset < bytes.length - 1) {
     const soi = findMarker(bytes, [0xff, 0xd8], offset);
     if (soi === -1) {
-      break;
+      return;
     }
+
     const eoi = findMarker(bytes, [0xff, 0xd9], soi + 2);
     if (eoi === -1) {
-      break;
+      offset = soi + 2;
+      continue;
     }
 
     const jpegBytes = bytes.slice(soi, eoi + 2);
-    const blob = new Blob([jpegBytes], { type: 'image/jpeg' });
-    const url = URL.createObjectURL(blob);
-    state.assetUrls.push(url);
-    images.push({
-      index: index + 1,
-      start: soi,
-      end: eoi + 2,
-      size: eoi - soi + 2,
-      blob,
-      bytes: jpegBytes,
-      url,
-    });
+    const dims = readJpegDimensions(jpegBytes);
+    if (dims && jpegBytes.length > 256) {
+      out.push({
+        kind: 'JPEG',
+        mimeType: 'image/jpeg',
+        start: soi,
+        end: eoi + 2,
+        bytes: jpegBytes,
+      });
+    }
 
     offset = eoi + 2;
-    index += 1;
+  }
+}
+
+function collectPngs(bytes, out) {
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  let offset = 0;
+
+  while (offset < bytes.length - signature.length) {
+    const start = findMarker(bytes, signature, offset);
+    if (start === -1) {
+      return;
+    }
+
+    const end = findPngEnd(bytes, start);
+    if (end > start) {
+      out.push({
+        kind: 'PNG',
+        mimeType: 'image/png',
+        start,
+        end,
+        bytes: bytes.slice(start, end),
+      });
+      offset = end;
+      continue;
+    }
+
+    offset = start + 1;
+  }
+}
+
+function collectGifs(bytes, out) {
+  const signatures = [
+    [0x47, 0x49, 0x46, 0x38, 0x37, 0x61],
+    [0x47, 0x49, 0x46, 0x38, 0x39, 0x61],
+  ];
+  let offset = 0;
+
+  while (offset < bytes.length - 6) {
+    let start = -1;
+    for (const signature of signatures) {
+      start = findMarker(bytes, signature, offset);
+      if (start !== -1) {
+        break;
+      }
+    }
+    if (start === -1) {
+      return;
+    }
+
+    const end = findMarker(bytes, [0x3b], start + 6);
+    if (end !== -1 && end > start + 10) {
+      out.push({
+        kind: 'GIF',
+        mimeType: 'image/gif',
+        start,
+        end: end + 1,
+        bytes: bytes.slice(start, end + 1),
+      });
+      offset = end + 1;
+      continue;
+    }
+
+    offset = start + 1;
+  }
+}
+
+function collectBmps(bytes, out) {
+  let offset = 0;
+
+  while (offset < bytes.length - 2) {
+    const start = findMarker(bytes, [0x42, 0x4d], offset);
+    if (start === -1) {
+      return;
+    }
+
+    if (start + 6 > bytes.length) {
+      return;
+    }
+
+    const size = readUint32Le(bytes, start + 2);
+    if (size > 0 && start + size <= bytes.length) {
+      const slice = bytes.slice(start, start + size);
+      out.push({
+        kind: 'BMP',
+        mimeType: 'image/bmp',
+        start,
+        end: start + size,
+        bytes: slice,
+      });
+      offset = start + size;
+      continue;
+    }
+
+    offset = start + 2;
+  }
+}
+
+function collectWebps(bytes, out) {
+  let offset = 0;
+
+  while (offset < bytes.length - 12) {
+    const start = findMarker(bytes, [0x52, 0x49, 0x46, 0x46], offset);
+    if (start === -1) {
+      return;
+    }
+
+    if (
+      start + 12 <= bytes.length &&
+      bytes[start + 8] === 0x57 &&
+      bytes[start + 9] === 0x45 &&
+      bytes[start + 10] === 0x42 &&
+      bytes[start + 11] === 0x50
+    ) {
+      const size = readUint32Le(bytes, start + 4);
+      const end = size > 0 ? start + 8 + size : -1;
+      if (end > start + 12 && end <= bytes.length) {
+        out.push({
+          kind: 'WEBP',
+          mimeType: 'image/webp',
+          start,
+          end,
+          bytes: bytes.slice(start, end),
+        });
+        offset = end;
+        continue;
+      }
+    }
+
+    offset = start + 4;
+  }
+}
+
+function collectEmfs(bytes, out) {
+  let offset = 0;
+
+  while (offset < bytes.length - 88) {
+    const start = findMarker(bytes, [0x01, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00], offset);
+    if (start === -1 || start + 88 > bytes.length) {
+      return;
+    }
+
+    const signatureOffset = start + 40;
+    if (
+      bytes[signatureOffset] !== 0x20 ||
+      bytes[signatureOffset + 1] !== 0x45 ||
+      bytes[signatureOffset + 2] !== 0x4d ||
+      bytes[signatureOffset + 3] !== 0x46
+    ) {
+      offset = start + 8;
+      continue;
+    }
+
+    const view = new DataView(bytes.buffer, bytes.byteOffset + start, Math.min(bytes.length - start, 108));
+    const totalBytes = view.getUint32(48, true);
+    if (totalBytes < 88 || start + totalBytes > bytes.length + 4) {
+      offset = start + 8;
+      continue;
+    }
+
+    out.push({
+      kind: 'EMF',
+      mimeType: 'image/x-emf',
+      start,
+      end: start + Math.min(bytes.length - start, totalBytes),
+      bytes: bytes.slice(start, Math.min(bytes.length, start + totalBytes)),
+    });
+
+    offset = start + totalBytes;
+  }
+}
+
+function findPngEnd(bytes, start) {
+  let offset = start + 8;
+
+  while (offset + 12 <= bytes.length) {
+    const length = readUint32Be(bytes, offset);
+    const chunkType = String.fromCharCode(
+      bytes[offset + 4],
+      bytes[offset + 5],
+      bytes[offset + 6],
+      bytes[offset + 7],
+    );
+    const chunkEnd = offset + 12 + length;
+    if (chunkEnd > bytes.length) {
+      return -1;
+    }
+    if (chunkType === 'IEND') {
+      return chunkEnd;
+    }
+    offset = chunkEnd;
   }
 
-  return images;
+  return -1;
+}
+
+function readUint32Le(bytes, offset) {
+  return (
+    bytes[offset] |
+    (bytes[offset + 1] << 8) |
+    (bytes[offset + 2] << 16) |
+    (bytes[offset + 3] << 24)
+  ) >>> 0;
+}
+
+function readUint32Be(bytes, offset) {
+  return (
+    (bytes[offset] << 24) |
+    (bytes[offset + 1] << 16) |
+    (bytes[offset + 2] << 8) |
+    bytes[offset + 3]
+  ) >>> 0;
 }
 
 function findMarker(bytes, marker, start) {
@@ -701,17 +961,21 @@ function buildDetails(parsed) {
 
 function buildAssets(parsed) {
   if (!parsed.images.length) {
-    return '<div class="empty-state">No embedded JPEGs were found in this file.</div>';
+    return '<div class="empty-state">No embedded assets were found in this file.</div>';
   }
 
   return parsed.images
     .map(
       (asset) => [
         '<figure class="asset">',
-        '<img src="' + asset.url + '" alt="Embedded image ' + asset.index + '" />',
+        asset.mimeType === 'image/x-emf'
+          ? '<canvas class="asset-canvas" data-asset-index="' + (asset.index - 1) + '" width="640" height="480"></canvas>'
+          : '<img src="' + asset.url + '" alt="Embedded asset ' + asset.index + '" />',
         '<div class="asset-actions">',
         '<button class="asset-button" type="button" data-asset-index="' + (asset.index - 1) + '">Save as PDF</button>',
-        '<span class="asset-caption">Image ' +
+        '<span class="asset-caption">' +
+          escapeHtml(asset.kind || 'Asset') +
+          ' ' +
           asset.index +
           ' · ' +
           formatBytes(asset.size) +
@@ -721,10 +985,64 @@ function buildAssets(parsed) {
           asset.end +
           '</span>',
         '</div>',
+        asset.mimeType === 'image/x-emf' ? '<div class="asset-note">Rendering preview...</div>' : '',
         '</figure>',
       ].join(''),
     )
     .join('');
+}
+
+async function renderAssetPreviews(parsed) {
+  const token = ++state.assetRenderToken;
+  const vectorAssets = parsed.images.filter((asset) => asset.mimeType === 'image/x-emf');
+  if (!vectorAssets.length) {
+    return;
+  }
+
+  if (!window.WMFConverter) {
+    for (const asset of vectorAssets) {
+      const canvas = els.assetGrid.querySelector('canvas[data-asset-index="' + (asset.index - 1) + '"]');
+      if (canvas) {
+        drawAssetFallback(canvas, asset, parsed, 'EMF rendering library failed to load.');
+      }
+    }
+    return;
+  }
+
+  const converter = new window.WMFConverter();
+  for (const asset of vectorAssets) {
+    if (token !== state.assetRenderToken) {
+      return;
+    }
+
+    const canvas = els.assetGrid.querySelector('canvas[data-asset-index="' + (asset.index - 1) + '"]');
+    if (!canvas) {
+      continue;
+    }
+
+    const note = canvas.closest('.asset')?.querySelector('.asset-note');
+    try {
+      const file = new File([asset.blob], 'asset.emf', { type: asset.mimeType });
+      await new Promise((resolve, reject) => {
+        try {
+          converter.toCanvas(file, canvas, () => resolve());
+        } catch (error) {
+          reject(error);
+        }
+      });
+
+      if (isCanvasBlank(canvas)) {
+        drawAssetFallback(canvas, asset, parsed, 'This asset rendered blank.');
+        if (note) note.textContent = 'Fallback preview';
+      } else if (note) {
+        note.textContent = 'Ready to preview';
+      }
+    } catch (error) {
+      drawAssetFallback(canvas, asset, parsed, 'Could not render this asset.');
+      if (note) note.textContent = 'Could not render';
+      console.error(error);
+    }
+  }
 }
 
 function buildStringList(strings) {
@@ -741,7 +1059,7 @@ function buildSummary(parsed) {
   const entries = [
     ['Boardmaker metadata', Object.keys(parsed.metadata).length + ' fields'],
     ['Visible strings', parsed.visibleStrings.length + ' fragments'],
-    ['Embedded images', parsed.images.length + ' JPEGs'],
+    ['Embedded assets', parsed.images.length + ' files'],
     ['BM2 pages', parsed.pages?.length || 0],
     ['Print mode', 'Browser print / Save as PDF'],
   ];
@@ -804,7 +1122,13 @@ async function downloadAssetPdf(asset, boardTitle, assetNumber) {
 
   const dataUrl = await blobToDataUrl(asset.blob);
   const bytes = new Uint8Array(await asset.blob.arrayBuffer());
-  const dims = readJpegDimensions(bytes) || { width: 384, height: 512 };
+  const dims =
+    readJpegDimensions(bytes) ||
+    readPngDimensions(bytes) ||
+    readGifDimensions(bytes) ||
+    readBmpDimensions(bytes) ||
+    readWebpDimensions(bytes) ||
+    { width: 384, height: 512 };
   const pageWidth = 576;
   const pageHeight = 768;
   const margin = 16;
@@ -823,8 +1147,147 @@ async function downloadAssetPdf(asset, boardTitle, assetNumber) {
     compress: true,
   });
 
-  pdf.addImage(dataUrl, 'JPEG', x, y, drawWidth, drawHeight, undefined, 'FAST');
+  pdf.addImage(dataUrl, assetToPdfFormat(asset), x, y, drawWidth, drawHeight, undefined, 'FAST');
   pdf.save(sanitizeFilename(boardTitle) + '-asset-' + assetNumber + '.pdf');
+}
+
+function drawAssetFallback(canvas, asset, parsed, message) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return;
+  }
+
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = '#d1d5db';
+  ctx.lineWidth = Math.max(2, Math.round(width / 260));
+  ctx.strokeRect(1, 1, width - 2, height - 2);
+
+  ctx.fillStyle = '#111827';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold ' + Math.max(18, Math.round(width / 20)) + 'px Avenir Next, Segoe UI, sans-serif';
+  ctx.fillText(asset.kind + ' asset', width / 2, Math.round(height * 0.18));
+
+  ctx.font = Math.max(12, Math.round(width / 40)) + 'px Avenir Next, Segoe UI, sans-serif';
+  ctx.fillStyle = '#4b5563';
+  ctx.fillText(message, width / 2, Math.round(height * 0.28));
+
+  const labels = (parsed.visibleStrings || []).slice(0, 4);
+  const chips = [asset.kind, ...labels].filter(Boolean).slice(0, 5);
+  const top = Math.round(height * 0.4);
+  const chipHeight = Math.max(34, Math.round(height / 12));
+  const gap = Math.max(8, Math.round(width / 48));
+  const chipWidth = Math.max(120, Math.min(Math.round(width * 0.74), width - 30));
+  const x = Math.round((width - chipWidth) / 2);
+
+  ctx.font = Math.max(13, Math.round(width / 32)) + 'px Avenir Next, Segoe UI, sans-serif';
+  chips.forEach((text, index) => {
+    const y = top + index * (chipHeight + gap);
+    roundRect(ctx, x, y, chipWidth, chipHeight, 12);
+    ctx.fillStyle = '#f3f4f6';
+    ctx.fill();
+    ctx.strokeStyle = '#d1d5db';
+    ctx.stroke();
+    ctx.fillStyle = '#152033';
+    ctx.fillText(text, width / 2, y + chipHeight / 2);
+  });
+
+  ctx.fillStyle = '#6b7280';
+  ctx.font = Math.max(11, Math.round(width / 50)) + 'px Avenir Next, Segoe UI, sans-serif';
+  ctx.fillText('Asset ' + asset.index + ' · ' + formatBytes(asset.size), width / 2, Math.round(height * 0.92));
+}
+
+function assetToPdfFormat(asset) {
+  switch (asset.mimeType) {
+    case 'image/png':
+      return 'PNG';
+    case 'image/gif':
+      return 'GIF';
+    case 'image/webp':
+      return 'WEBP';
+    case 'image/bmp':
+      return 'BMP';
+    default:
+      return 'JPEG';
+  }
+}
+
+function readPngDimensions(bytes) {
+  if (bytes.length < 24) {
+    return null;
+  }
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  for (let i = 0; i < signature.length; i += 1) {
+    if (bytes[i] !== signature[i]) {
+      return null;
+    }
+  }
+
+  return {
+    width: readUint32Be(bytes, 16),
+    height: readUint32Be(bytes, 20),
+  };
+}
+
+function readGifDimensions(bytes) {
+  if (bytes.length < 10) {
+    return null;
+  }
+  const header = String.fromCharCode(...bytes.slice(0, 6));
+  if (header !== 'GIF87a' && header !== 'GIF89a') {
+    return null;
+  }
+  return {
+    width: bytes[6] | (bytes[7] << 8),
+    height: bytes[8] | (bytes[9] << 8),
+  };
+}
+
+function readBmpDimensions(bytes) {
+  if (bytes.length < 26 || bytes[0] !== 0x42 || bytes[1] !== 0x4d) {
+    return null;
+  }
+  return {
+    width: Math.abs(bytes[18] | (bytes[19] << 8) | (bytes[20] << 16) | (bytes[21] << 24)),
+    height: Math.abs(bytes[22] | (bytes[23] << 8) | (bytes[24] << 16) | (bytes[25] << 24)),
+  };
+}
+
+function readWebpDimensions(bytes) {
+  if (bytes.length < 30) {
+    return null;
+  }
+  if (
+    String.fromCharCode(...bytes.slice(0, 4)) !== 'RIFF' ||
+    String.fromCharCode(...bytes.slice(8, 12)) !== 'WEBP'
+  ) {
+    return null;
+  }
+
+  const chunk = String.fromCharCode(...bytes.slice(12, 16));
+  if (chunk === 'VP8X' && bytes.length >= 30) {
+    const width = 1 + (bytes[24] | (bytes[25] << 8) | (bytes[26] << 16));
+    const height = 1 + (bytes[27] | (bytes[28] << 8) | (bytes[29] << 16));
+    return { width, height };
+  }
+  if (chunk === 'VP8 ' && bytes.length >= 30) {
+    return { width: bytes[26] | (bytes[27] << 8), height: bytes[28] | (bytes[29] << 8) };
+  }
+  if (chunk === 'VP8L' && bytes.length >= 25) {
+    const b0 = bytes[21];
+    const b1 = bytes[22];
+    const b2 = bytes[23];
+    const b3 = bytes[24];
+    const width = 1 + (((b1 & 0x3f) << 8) | b0);
+    const height = 1 + (((b3 & 0x0f) << 10) | (b2 << 2) | ((b1 & 0xc0) >> 6));
+    return { width, height };
+  }
+
+  return null;
 }
 
 function readJpegDimensions(bytes) {

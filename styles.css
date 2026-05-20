@@ -379,10 +379,22 @@ h1 {
 .asset img {
   width: 100%;
   aspect-ratio: 3 / 4;
-  object-fit: cover;
   display: block;
   border-radius: 12px;
   background: #dbe4f0;
+}
+
+.asset img {
+  object-fit: contain;
+}
+
+.asset canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 12px;
+  background: #ffffff;
+  border: 1px solid rgba(21, 32, 51, 0.08);
 }
 
 .page-preview {
@@ -438,6 +450,11 @@ h1 {
 
 .asset-caption {
   font-size: 0.84rem;
+  color: var(--muted-dark);
+}
+
+.asset-note {
+  font-size: 0.78rem;
   color: var(--muted-dark);
 }
 
