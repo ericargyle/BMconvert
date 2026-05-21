@@ -459,14 +459,13 @@ h1 {
 }
 
 .asset-actions {
-  display: flex;
-  justify-content: flex-start;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  align-items: center;
 }
 
 .asset-button {
+  width: 100%;
   border: 0;
   border-radius: 999px;
   padding: 9px 12px;
@@ -490,7 +489,8 @@ h1 {
 }
 
 .asset-caption {
-  flex-basis: 100%;
+  font-size: 0.84rem;
+  color: var(--muted-dark);
 }
 
 .string-list {
@@ -603,6 +603,10 @@ code {
 
   .button {
     width: 100%;
+  }
+
+  .asset-actions {
+    grid-template-columns: 1fr;
   }
 }
 

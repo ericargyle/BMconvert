@@ -1080,6 +1080,7 @@ function buildAssets(parsed) {
         '<div class="asset-actions">',
         '<button class="asset-button" type="button" data-asset-index="' + (asset.index - 1) + '">Save as PDF</button>',
         '<button class="asset-button asset-button-secondary" type="button" data-asset-index="' + (asset.index - 1) + '" data-asset-native="true">Save native file</button>',
+        '</div>',
         '<span class="asset-caption">' +
           escapeHtml(asset.kind || 'Asset') +
           ' ' +
@@ -1091,7 +1092,6 @@ function buildAssets(parsed) {
           ' to ' +
           asset.end +
           '</span>',
-        '</div>',
         asset.mimeType === 'image/x-emf' ? '<div class="asset-note">Rendering preview...</div>' : '',
         '</figure>',
       ].join(''),
