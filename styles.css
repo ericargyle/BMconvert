@@ -448,11 +448,6 @@ h1 {
   color: var(--muted-dark);
 }
 
-.asset-caption {
-  font-size: 0.84rem;
-  color: var(--muted-dark);
-}
-
 .asset-note {
   font-size: 0.78rem;
   color: var(--muted-dark);
@@ -486,11 +481,6 @@ h1 {
 
 .asset-button-secondary:hover {
   background: #2f394a;
-}
-
-.asset-caption {
-  font-size: 0.84rem;
-  color: var(--muted-dark);
 }
 
 .string-list {

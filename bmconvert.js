@@ -1072,29 +1072,21 @@ function buildAssets(parsed) {
 
   return parsed.images
     .map(
-      (asset) => [
-        '<figure class="asset">',
-        asset.mimeType === 'image/x-emf'
-          ? '<canvas class="asset-canvas" data-asset-index="' + (asset.index - 1) + '" width="640" height="480"></canvas>'
-          : '<img src="' + asset.url + '" alt="Embedded asset ' + asset.index + '" />',
-        '<div class="asset-actions">',
-        '<button class="asset-button" type="button" data-asset-index="' + (asset.index - 1) + '">Save as PDF</button>',
-        '<button class="asset-button asset-button-secondary" type="button" data-asset-index="' + (asset.index - 1) + '" data-asset-native="true">Save native file</button>',
-        '</div>',
-        '<span class="asset-caption">' +
-          escapeHtml(asset.kind || 'Asset') +
-          ' ' +
-          asset.index +
-          ' · ' +
-          formatBytes(asset.size) +
-          ' · bytes ' +
-          asset.start +
-          ' to ' +
-          asset.end +
-          '</span>',
-        asset.mimeType === 'image/x-emf' ? '<div class="asset-note">Rendering preview...</div>' : '',
-        '</figure>',
-      ].join(''),
+      (asset) => {
+        const nativeLabel = assetNativeLabel(asset);
+        return [
+          '<figure class="asset">',
+          asset.mimeType === 'image/x-emf'
+            ? '<canvas class="asset-canvas" data-asset-index="' + (asset.index - 1) + '" width="640" height="480"></canvas>'
+            : '<img src="' + asset.url + '" alt="Embedded asset ' + asset.index + '" />',
+          '<div class="asset-actions">',
+          '<button class="asset-button" type="button" data-asset-index="' + (asset.index - 1) + '">Save as PDF</button>',
+          '<button class="asset-button asset-button-secondary" type="button" data-asset-index="' + (asset.index - 1) + '" data-asset-native="true">Save as ' + escapeHtml(nativeLabel) + '</button>',
+          '</div>',
+          asset.mimeType === 'image/x-emf' ? '<div class="asset-note">Rendering preview...</div>' : '',
+          '</figure>',
+        ].join('');
+      },
     )
     .join('');
 }
@@ -1352,6 +1344,27 @@ function assetExtension(asset) {
       return '.emf';
     default:
       return mimeTypeExtension(asset.mimeType);
+  }
+}
+
+function assetNativeLabel(asset) {
+  switch (asset.mimeType) {
+    case 'image/jpeg':
+      return 'JPG';
+    case 'image/png':
+      return 'PNG';
+    case 'image/gif':
+      return 'GIF';
+    case 'image/bmp':
+      return 'BMP';
+    case 'image/webp':
+      return 'WEBP';
+    case 'image/x-emf':
+      return 'EMF';
+    default: {
+      const extension = assetExtension(asset).replace(/^\./, '').toUpperCase();
+      return extension || 'native file';
+    }
   }
 }
 
