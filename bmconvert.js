@@ -167,6 +167,11 @@ function onAssetGridClick(event) {
   const index = Number(button.getAttribute('data-asset-index'));
   const asset = state.parsed.images[index];
   if (asset) {
+    if (button.hasAttribute('data-asset-native')) {
+      downloadAssetNative(asset, state.parsed.title || stripExt(state.parsed.name), index + 1);
+      return;
+    }
+
     const canvas = button.closest('.asset')?.querySelector('canvas');
     if (asset.mimeType === 'image/x-emf' && canvas) {
       downloadCanvasPdf(
@@ -1074,6 +1079,7 @@ function buildAssets(parsed) {
           : '<img src="' + asset.url + '" alt="Embedded asset ' + asset.index + '" />',
         '<div class="asset-actions">',
         '<button class="asset-button" type="button" data-asset-index="' + (asset.index - 1) + '">Save as PDF</button>',
+        '<button class="asset-button asset-button-secondary" type="button" data-asset-index="' + (asset.index - 1) + '" data-asset-native="true">Save native file</button>',
         '<span class="asset-caption">' +
           escapeHtml(asset.kind || 'Asset') +
           ' ' +
@@ -1252,6 +1258,19 @@ async function downloadAssetPdf(asset, boardTitle, assetNumber) {
   pdf.save(sanitizeFilename(boardTitle) + '-asset-' + assetNumber + '.pdf');
 }
 
+function downloadAssetNative(asset, boardTitle, assetNumber) {
+  const filename = sanitizeFilename(boardTitle) + '-asset-' + assetNumber + assetExtension(asset);
+  const url = URL.createObjectURL(asset.blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = 'noopener';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function drawAssetFallback(canvas, asset, parsed, message) {
   const ctx = canvas.getContext('2d');
   if (!ctx) {
@@ -1314,6 +1333,46 @@ function assetToPdfFormat(asset) {
       return 'BMP';
     default:
       return 'JPEG';
+  }
+}
+
+function assetExtension(asset) {
+  switch (asset.mimeType) {
+    case 'image/jpeg':
+      return '.jpg';
+    case 'image/png':
+      return '.png';
+    case 'image/gif':
+      return '.gif';
+    case 'image/bmp':
+      return '.bmp';
+    case 'image/webp':
+      return '.webp';
+    case 'image/x-emf':
+      return '.emf';
+    default:
+      return mimeTypeExtension(asset.mimeType);
+  }
+}
+
+function mimeTypeExtension(mimeType) {
+  switch (mimeType) {
+    case 'image/jpeg':
+      return '.jpg';
+    case 'image/png':
+      return '.png';
+    case 'image/gif':
+      return '.gif';
+    case 'image/bmp':
+      return '.bmp';
+    case 'image/webp':
+      return '.webp';
+    case 'image/x-emf':
+      return '.emf';
+    case 'application/pdf':
+      return '.pdf';
+    default:
+      return '.bin';
   }
 }
 

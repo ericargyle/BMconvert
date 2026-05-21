@@ -460,7 +460,8 @@ h1 {
 
 .asset-actions {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: center;
 }
@@ -476,8 +477,20 @@ h1 {
   color: #fff;
 }
 
+.asset-button-secondary {
+  background: #445066;
+}
+
 .asset-button:hover {
   background: #0f172a;
+}
+
+.asset-button-secondary:hover {
+  background: #2f394a;
+}
+
+.asset-caption {
+  flex-basis: 100%;
 }
 
 .string-list {
